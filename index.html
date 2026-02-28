@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>PayCycle Pro</title>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getFirestore, doc, onSnapshot, updateDoc, collection, addDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+          apiKey: "AIzaSyBn59ykHu1TDi89UGpiLTP4lY2YyR3wdso",
+          authDomain: "ourpaycycle.firebaseapp.com",
+          projectId: "ourpaycycle",
+          storageBucket: "ourpaycycle.firebasestorage.app",
+          messagingSenderId: "792169138984",
+          appId: "1:792169138984:web:75a3adcc52e56420f6de1d"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const expensesRef = collection(db, "expenses");
+        const budgetRef = doc(db, "household", "budget");
+
+        let rawBuffer = 0;
+        let currentExpenses = [];
+
+        // --- AUTOMATED CLOCK LOGIC ---
+        const getNextPayday = () => {
+            const t = new Date();
+            const p1 = new Date("2026-03-13");
+            const p2 = new Date("2026-03-27");
+            return t <= p1 ? p1 : p2;
+        };
+
+        const calculateSafeSpend = () => {
+            const today = new Date();
+            const payday = getNextPayday();
+            const todayDay = today.getDate();
+            const paydayDay = payday.getDate();
+            
+            let upcomingBillsTotal = 0;
+
+            currentExpenses.forEach(bill => {
+                const bDay = parseInt(bill.day);
+                // Automation: Only subtract if bill is between today and next payday
+                if (bDay >= todayDay && bDay < paydayDay) {
+                    upcomingBillsTotal += parseFloat(bill.amount);
+                }
+            });
+
+            const safe = rawBuffer - upcomingBillsTotal;
+            document.getElementById('buffer-val').innerText = `$${safe.toFixed(2)}`;
+            document.getElementById('upcoming-tag').innerText = `-$${upcomingBillsTotal.toFixed(0)} for upcoming bills`;
+            document.getElementById('days-left').innerText = Math.max(0, Math.ceil((payday - today) / (1000 * 60 * 60 * 24)));
+            document.getElementById('payday-label').innerText = payday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        };
+
+        // --- DATABASE SYNC ---
+        onSnapshot(expensesRef, (snap) => {
+            currentExpenses = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            const list = document.getElementById('bill-list');
+            list.innerHTML = currentExpenses.map(b => `
+                <div class="flex justify-between items-center p-4 bg-slate-50 rounded-2xl mb-2 border border-slate-100">
+                    <div class="font-bold text-slate-800">${b.name}<p class="text-[9px] text-slate-400">Day ${b.day}</p></div>
+                    <div class="text-right">
+                        <p class="font-black text-slate-900">$${parseFloat(b.amount).toFixed(2)}</p>
+                        <button onclick="deleteExpense('${b.id}')" class="text-[10px] text-red-400 font-bold uppercase">Remove</button>
+                    </div>
+                </div>`).join('');
+            calculateSafeSpend();
+        });
+
+        onSnapshot(budgetRef, (doc) => {
+            if (doc.exists()) {
+                rawBuffer = doc.data().buffer;
+                document.getElementById('admin-buffer-input').value = rawBuffer;
+                calculateSafeSpend();
+            }
+        });
+
+        // --- ADMIN ACTIONS ---
+        window.updateRawBalance = async () => {
+            const newVal = parseFloat(document.getElementById('admin-buffer-input').value);
+            await updateDoc(budgetRef, { buffer: newVal });
+            toggleAdmin();
+        };
+
+        window.saveExpense = async () => {
+            const name = document.getElementById('exp-name').value;
+            const amount = document.getElementById('exp-amount').value;
+            const day = document.getElementById('exp-day').value;
+            if (name && amount) {
+                await addDoc(expensesRef, { name, amount, day });
+                document.getElementById('exp-form').reset();
+            }
+        };
+
+        window.deleteExpense = async (id) => { if(confirm('Delete?')) await deleteDoc(doc(db, "expenses", id)); };
+        window.logSpend = async () => {
+            const amt = prompt("Amount spent?");
+            if (amt && !isNaN(amt)) await updateDoc(budgetRef, { buffer: rawBuffer - parseFloat(amt) });
+        };
+
+        window.toggleView = (v) => document.querySelectorAll('.view').forEach(el => el.classList.toggle('hidden', el.id !== v));
+        window.toggleAdmin = () => document.getElementById('admin-drawer').classList.toggle('translate-y-full');
+
+    </script>
+    <style>
+        body { background-color: #f8fafc; padding-top: env(safe-area-inset-top); user-select: none; overflow: hidden; }
+        .view { height: 100vh; overflow-y: auto; padding-bottom: 120px; }
+        .glass { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+    </style>
+</head>
+<body class="font-sans text-slate-900">
+
+    <div id="home" class="view px-6 py-10 max-w-md mx-auto">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-xs font-black text-slate-400 uppercase tracking-[0.2em]">Live Sync</h2>
+            <button onclick="toggleAdmin()" class="p-2 text-slate-300 italic text-sm">Settings ⚙️</button>
+        </div>
+
+        <div class="bg-indigo-600 text-white p-10 rounded-[3rem] shadow-2xl mb-8 relative overflow-hidden">
+            <div class="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full"></div>
+            <h1 class="text-7xl font-black tracking-tighter leading-none"><span id="days-left">--</span></h1>
+            <p class="text-indigo-200 text-xs font-bold uppercase mt-2 tracking-widest">Days to <span id="payday-label">--</span></p>
+        </div>
+
+        <div class="glass p-12 rounded-[3.5rem] shadow-xl text-center mb-8 border border-white/40">
+            <p class="text-slate-400 font-bold uppercase tracking-widest text-[10px] mb-2">Safe to Spend</p>
+            <div id="buffer-val" class="text-6xl font-black tracking-tight mb-2 leading-none text-slate-900">$0.00</div>
+            <p id="upcoming-tag" class="text-[10px] font-black text-indigo-500 uppercase tracking-tight mb-10">Calculated Live</p>
+            <button onclick="logSpend()" class="w-full bg-slate-900 text-white py-6 rounded-3xl font-bold text-xl active:scale-95 transition-all shadow-lg shadow-slate-200">Log Spend</button>
+        </div>
+    </div>
+
+    <div id="bills" class="view hidden px-6 py-10 max-w-md mx-auto">
+        <h2 class="text-3xl font-black tracking-tight mb-8 text-slate-900 leading-none">Automated<br>Bills</h2>
+        
+        <div class="bg-white p-6 rounded-3xl shadow-sm mb-6 border border-slate-100">
+            <h3 class="text-xs font-bold text-slate-400 uppercase mb-4">Add New Bill</h3>
+            <form id="exp-form" class="space-y-3">
+                <input id="exp-name" type="text" placeholder="Bill Name" class="w-full p-4 bg-slate-50 font-bold rounded-2xl text-sm">
+                <div class="flex gap-2">
+                    <input id="exp-amount" type="number" placeholder="$ Amt" class="w-1/2 p-4 bg-slate-50 font-bold rounded-2xl text-sm">
+                    <input id="exp-day" type="number" placeholder="Day" class="w-1/2 p-4 bg-slate-50 font-bold rounded-2xl text-sm">
+                </div>
+                <button type="button" onclick="saveExpense()" class="w-full bg-indigo-50 text-indigo-600 py-4 rounded-2xl font-black text-xs uppercase tracking-widest">Add to Database</button>
+            </form>
+        </div>
+
+        <div id="bill-list"></div>
+    </div>
+
+    <div id="admin-drawer" class="fixed inset-0 z-50 translate-y-full transition-transform duration-500 flex flex-col justify-end">
+        <div onclick="toggleAdmin()" class="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"></div>
+        <div class="relative bg-white rounded-t-[3rem] p-10">
+            <h3 class="text-xl font-black mb-2">Admin Overrides</h3>
+            <p class="text-slate-400 text-xs mb-8 uppercase font-bold tracking-widest">Adjust raw bank balance</p>
+            <input id="admin-buffer-input" type="number" class="w-full p-5 bg-slate-100 font-black text-3xl rounded-[2rem] text-center mb-6 text-slate-900">
+            <button onclick="updateRawBalance()" class="w-full bg-indigo-600 text-white py-6 rounded-3xl font-black uppercase tracking-widest text-sm shadow-xl shadow-indigo-100">Sync Changes</button>
+        </div>
+    </div>
+
+    <div class="fixed bottom-0 left-0 right-0 glass border-t border-slate-100 p-8 flex justify-around items-center">
+        <button onclick="toggleView('home')" class="flex flex-col items-center opacity-40 active:opacity-100">🏠<span class="text-[9px] font-black uppercase mt-1">Main</span></button>
+        <button onclick="toggleView('bills')" class="flex flex-col items-center opacity-40 active:opacity-100">📝<span class="text-[9px] font-black uppercase mt-1">Bills</span></button>
+    </div>
+
+</body>
+</html>
